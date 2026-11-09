@@ -131,3 +131,15 @@ URL (23 chars via t.co).
 | 13 Nov | Dry-run of the whole judge path from a clean checkout; repo public (human pushes); final payload review |
 | 14 Nov | Human posts demo on X → fill `demoUrl` → print full JSON → human confirms → submit ONCE before 23:59 UTC |
 | 16–18 Nov | Judging; results by 18 Nov 23:59 UTC |
+
+## Post-submission correction (10 Nov 2026 — branch `near-ledger`, NOT filed)
+
+The reputation ledger is now an **on-chain NEAR contract**
+(`mintguard.testnet` on testnet) instead of the local `data/ledger.jsonl`
+file described at submission time. The submitted `idea` text needs no
+change ("Every vetting and mint is recorded in the agent's reputation
+ledger" — still true). Proof: GLOOP → RISKY 70 recorded on-chain (tx
+`G2maiiR7fDfKKLfvdBpohphUJcrbaPNJkA1rprzhFuGS`). Full details + how to
+file the correction at https://nearhackathon.com/request-changes:
+`LEDGER_CORRECTION_NOTE.md`. **Do NOT file without Rakha's explicit
+go-ahead, and never re-submit (same repo = 409).**

@@ -1,0 +1,24 @@
+[package]
+name = "mintguard-reputation-ledger"
+version = "0.1.0"
+edition = "2021"
+description = "MintGuard on-chain reputation ledger (NEAR testnet): append-only record of vetting verdicts"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = "5"
+
+# `unit-testing` feature lets `cargo test` compile near-sdk on the host
+# (without it, near-sdk 5 refuses non-wasm builds).
+[dev-dependencies]
+near-sdk = { version = "5", features = ["unit-testing"] }
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"

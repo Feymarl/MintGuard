@@ -7,3 +7,5 @@ coverage/
 *.log
 .DS_Store
 data/
+# Rust build artefacts (NEAR contract)
+contracts/reputation-ledger/target/

@@ -31,7 +31,12 @@ agent — and gives the agent a wallet it cannot leak.
    MPC network. **No seed or private key ever exists on the agent's machine.**
 3. **RECORD** — every vetting and mint is appended to the agent's reputation
    ledger, so other agents (and humans) can check what this agent has
-   verified before trusting it.
+   verified before trusting it. The ledger is an **on-chain NEAR contract**
+   (`mintguard.testnet` on testnet, `contracts/reputation-ledger/`):
+   `record_verdict` appends one entry per vetting (contract, verdict,
+   score, reason, chain, agent, timestamp); `get_verdict` /
+   `list_verdicts` read it back. The local `data/ledger.jsonl` file is
+   only a local mirror of the same entries.
 
 ## NEAR technology used
 
@@ -43,6 +48,13 @@ agent — and gives the agent a wallet it cannot leak.
   64-byte `x||y`).
 - **NEAR testnet** — all signing demos run on testnet with free faucet funds
   (testnet-only projects are eligible in all tracks).
+- **On-chain reputation ledger** — a Rust contract (`near-sdk` 5,
+  `contracts/reputation-ledger/`) deployed to `mintguard.testnet` on
+  testnet: `record_verdict` / `get_verdict` / `list_verdicts` /
+  `verdict_count`. Live proof: GLOOP
+  `0x183CBb52B3C7BCB2433d50dE0Add99B59f4DE4fE` → RISKY 70, recorded
+  on-chain (see `scripts/record-verdict.ts` + `LEDGER_CORRECTION_NOTE.md`).
+  Explorer: https://testnet.nearblocks.io/accounts/mintguard.testnet
 - **NEAR Intents** (stretch) — swap the minted asset / pay for services with
   intents instead of holding the asset.
 
@@ -86,6 +98,19 @@ npm test   # 27 tests (23 offline + 4 live against BSC) — all pass
 npx tsc --noEmit
 ```
 
+**5. Read the on-chain reputation ledger (no key needed — view calls):**
+
+```sh
+npx tsx scripts/record-verdict.ts --ca 0x183CBb52B3C7BCB2433d50dE0Add99B59f4DE4fE
+```
+
+Expected: engine verdict `RISKY 70 — sim reverted: Agent ID required`,
+then a `record_verdict` tx on NEAR testnet, then `get_verdict` read-back
+showing the same verdict on-chain (`agent: "mintguard.testnet"`).
+(This step DOES send a testnet transaction — it needs the agent key in
+`.env.local`. To read the ledger without any key, query the contract
+directly: https://testnet.nearblocks.io/accounts/mintguard.testnet)
+
 **4. End-to-end demo:** `npm run demo` (vet → derive → MPC sign →
 BSC-testnet mint in one flow) is still in progress — `src/agent/` is empty
 and the live MPC `sign` validation is the next build step (10–11 Nov, see
@@ -110,7 +135,9 @@ src/vetting/core/        # Chain-agnostic vetting engine (types, selectors,
 src/vetting/adapters/bsc.ts  # BSC adapter (dataseed RPC, Sourcify, GoPlus)
 src/vetting/             # vetContract() entry point + CLI
 src/signing/             # NEAR Chain Signatures (derive, MPC sign, broadcast)
-src/reputation/          # Agent reputation ledger (+ NEAR contract, stretch)
+src/reputation/          # Agent reputation ledger: on-chain NEAR contract
+                         # (contracts/reputation-ledger/, live on testnet)
+                         # + local JSONL mirror (data/ledger.jsonl)
 src/agent/               # Orchestration + policy gate (free-only, gas ceiling)
 demo/                    # Web demo UI
 docs/                    # rules-summary, architecture, chain-signatures research,
@@ -153,7 +180,10 @@ chain adapter + submission angle, not a rewrite.
       verdicts) + video script (`docs/demo-script.md`) + submission pack
       (`docs/submission.md`)
 - [ ] Day-1 validation: live MPC `sign` + BSC testnet broadcast
-- [ ] Reputation ledger + agent orchestration
+- [x] Reputation ledger ON-CHAIN (NEAR testnet contract `mintguard.testnet`,
+      `contracts/reputation-ledger/`; GLOOP → RISKY 70 recorded + read back,
+      see `LEDGER_CORRECTION_NOTE.md`)
+- [ ] Agent orchestration
 - [ ] Demo video (script ready, record 12 Nov) + submission (repo public, X
       demo post, form before 14 Nov 2026 23:59 UTC)
 

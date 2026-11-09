@@ -1,12 +1,13 @@
-// MintGuard — Reputation Ledger (local, append-only).
+// MintGuard — Reputation Ledger (local mirror + on-chain source of truth).
 //
-// Every vetting and every mint the agent performs is recorded here as one
-// JSON line in data/ledger.jsonl (gitignored — run artefacts, never committed).
-// The ledger is the agent's local reputation trail: judges (and the operator)
-// can audit exactly what the agent vetted, what it minted, and what it
-// refused. The on-chain NEAR reputation contract (src/reputation/contract.ts)
-// is a stretch goal that would mirror these entries on-chain; the local
-// ledger is the source of truth until then.
+// The on-chain NEAR contract is LIVE on testnet (account
+// `mintguard.testnet`, code in contracts/reputation-ledger/, client in
+// src/reputation/onchain-ledger.ts): every vetting the agent performs is
+// recorded with `record_verdict` and readable with `get_verdict` /
+// `list_verdicts`. This file is the LOCAL mirror of the same entries —
+// one JSON line per vetting/mint in data/ledger.jsonl (gitignored, run
+// artefacts). The on-chain ledger is the source of truth; the local file
+// exists so a run can be audited even without network access.
 //
 // Design:
 //   - Append-only: entries are added with fs.appendFileSync, never edited or
