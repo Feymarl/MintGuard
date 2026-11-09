@@ -11,6 +11,7 @@
 //   - explicit hidden fee signal                      -> BLOCK
 // Everything else only deducts points; score >= 80 -> SAFE, else RISKY.
 
+import { ethers } from "ethers";
 import type { Risk, TokenSecurity, VettingInput, VettingVerdict, VerdictKind } from "./types.js";
 import { isMintCandidate } from "./selectors.js";
 
@@ -34,6 +35,31 @@ export function hasMintFunction(abi: any[]): boolean {
       typeof e.name === "string" &&
       isMintCandidate(e.name),
   );
+}
+
+/**
+ * Is this mint PROVEN free (price exactly 0 wei)? True only when ALL hold:
+ *   1. No mintPrice()/price()/cost() value is readable (price is null), AND
+ *   2. the value-0 eth_call simulation of the mint function SUCCEEDED, AND
+ *   3. the simulated function is NONPAYABLE in the verified ABI.
+ *
+ * A nonpayable function reverts on ANY nonzero value (EVM-enforced), so
+ * a value-0 success proves the mint costs exactly 0 wei — this is
+ * evidence, not a default. Without a successful simulation, or without
+ * the nonpayable marker (e.g. a payable mint, or an unverified ABI),
+ * the price stays null (unknown) and the policy gate still refuses it
+ * as unprovable. The policy gate itself is NOT touched: it keeps
+ * enforcing free-only against the value reported here.
+ */
+export function isProvenFreeMint(input: VettingInput): boolean {
+  if (input.chain.mintPriceWei !== null) return false;
+  if (!input.simulation.ok || !input.simulation.fn) return false;
+  try {
+    const frag = new ethers.Interface(input.sourcify.abi).getFunction(input.simulation.fn);
+    return frag?.stateMutability === "nonpayable";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -123,6 +149,17 @@ export function scoreVetting(input: VettingInput): ScoredOutput {
         "warn",
       ),
     );
+  } else if (price === null && isProvenFreeMint(input)) {
+    // No readable price getter, but the mint is PROVEN free (see
+    // isProvenFreeMint): record the evidence in-band so the verdict
+    // shows why mintPriceWei is reported as "0" instead of null.
+    risks.push(
+      risk(
+        "price_inferred_free",
+        "No mintPrice()/price()/cost() readable; the simulated mint function is nonpayable and the value-0 simulation succeeded, so the mint provably costs 0 wei (a nonpayable function reverts on any nonzero value).",
+        "info",
+      ),
+    );
   }
 
   // --- 5. Quota -----------------------------------------------------------
@@ -190,6 +227,14 @@ export function buildVerdict(
 ): VettingVerdict {
   const { risks, score, verdict } = scoreVetting(input);
   const quota = deriveFreeQuota(input.chain);
+  // Proven-free mints (no price getter, nonpayable sim success) report
+  // mintPriceWei "0" — see isProvenFreeMint. Otherwise the raw read
+  // (a value, or null when unknown/unreadable).
+  const mintPriceWei = isProvenFreeMint(input)
+    ? "0"
+    : input.chain.mintPriceWei !== null
+      ? input.chain.mintPriceWei.toString()
+      : null;
   return {
     contract: input.contract,
     chain: chainKey,
@@ -198,7 +243,7 @@ export function buildVerdict(
     exactMatch: input.sourcify.exactMatch,
     isProxy: Boolean(input.sourcify.isProxy || input.chain.implementationSlot),
     implementation: input.sourcify.implementation ?? input.chain.implementationSlot ?? null,
-    mintPriceWei: input.chain.mintPriceWei !== null ? input.chain.mintPriceWei.toString() : null,
+    mintPriceWei,
     freeQuotaRemaining: quota,
     totalMinted: input.chain.totalMinted,
     maxSupply: input.chain.maxSupply,

@@ -9,6 +9,7 @@
 import type { ChainAdapter, TokenSecurity } from "../core/types.js";
 import { parseGoPlusResponse } from "../core/safety.js";
 import { BROWSER_UA } from "../sourcify.js";
+import { bscTestnetAdapter } from "./bsc-testnet.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api/v1/token_security";
 
@@ -36,9 +37,14 @@ export const bscAdapter: ChainAdapter = {
   getTokenSecurity: fetchGoPlusBsc,
 };
 
-/** Adapter registry. New chains register here; the CLI picks by --chain. */
+/** Adapter registry. New chains register here; the CLI picks by --chain.
+ *  bsc-testnet (97) is registered alongside bsc (56): same family, but
+ *  vetting a testnet contract through the mainnet adapter checks the
+ *  WRONG chain (an address that only exists on testnet reads as "no
+ *  code" on mainnet). The demo's sign/full modes vet on bsc-testnet. */
 export const ADAPTERS: Record<string, ChainAdapter> = {
   bsc: bscAdapter,
+  "bsc-testnet": bscTestnetAdapter,
 };
 
 export function getAdapter(chainKey: string): ChainAdapter {

@@ -301,6 +301,24 @@ describe("live-full gas + balance guards (offline)", () => {
     expect(estimateGasCostWei({})).toBeNull();
   });
 
+  test("estimateGasCostWei: viem-style `gas` (what the chainsig adapter prepares)", () => {
+    // A real prepared tx from the chainsig EVM adapter carries
+    // { gas, maxFeePerGas, maxPriorityFeePerGas } — no `gasLimit`.
+    // The estimator must read `gas` or the live flow refuses to
+    // broadcast blind on every real mint.
+    expect(
+      estimateGasCostWei({ gas: 57_319n, maxFeePerGas: 100_000_000n }),
+    ).toBe(57_319n * 100_000_000n);
+    expect(estimateGasCostWei({ gas: 57_319n })).toBeNull();
+    expect(estimateGasCostWei({ gas: 57_319n, gasPrice: 5_000_000_000n })).toBe(
+      57_319n * 5_000_000_000n,
+    );
+    // gasLimit still wins when both are present
+    expect(
+      estimateGasCostWei({ gasLimit: 100_000n, gas: 57_319n, maxFeePerGas: 1_000_000_000n }),
+    ).toBe(100_000n * 1_000_000_000n);
+  });
+
   test("assertBalanceCoversGas: 0 fails with faucet hint, short fails, enough passes", () => {
     expect(() => assertBalanceCoversGas(0n, 100n)).toThrow(/bnbchain_official_bot/);
     expect(() => assertBalanceCoversGas(99n, 100n)).toThrow(/too low/);

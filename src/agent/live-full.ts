@@ -113,6 +113,14 @@ export function buildLiveMintCalldata(
 /** Fields of a prepared tx that determine its gas cost. */
 export interface PreparedGasFields {
   gasLimit?: bigint | number | null;
+  /**
+   * viem-style gas limit. The chainsig EVM adapter prepares viem
+   * transactions, which carry `gas` (not `gasLimit`): a prepared tx
+   * from the adapter has { gas, maxFeePerGas, maxPriorityFeePerGas }.
+   * Reading only `gasLimit` made the estimator return null for every
+   * real prepared tx and the live flow refused to broadcast blind.
+   */
+  gas?: bigint | number | null;
   gasPrice?: bigint | number | null;
   maxFeePerGas?: bigint | number | null;
 }
@@ -120,14 +128,17 @@ export interface PreparedGasFields {
 /**
  * Estimated total gas cost (wei) of a prepared tx: gasLimit * fee.
  * EIP-1559 (type 2, what the chainsig adapter prepares) uses
- * maxFeePerGas; legacy txs use gasPrice. Returns null when the cost
- * cannot be determined — the caller must refuse to broadcast blind.
+ * maxFeePerGas; legacy txs use gasPrice. The limit is read from
+ * `gasLimit` (ethers style) or `gas` (viem style, what the adapter
+ * actually prepares). Returns null when the cost cannot be determined —
+ * the caller must refuse to broadcast blind.
  */
 export function estimateGasCostWei(tx: PreparedGasFields): bigint | null {
-  if (tx.gasLimit === undefined || tx.gasLimit === null) return null;
+  const limit = tx.gasLimit ?? tx.gas;
+  if (limit === undefined || limit === null) return null;
   const fee = tx.maxFeePerGas ?? tx.gasPrice;
   if (fee === undefined || fee === null) return null;
-  return BigInt(tx.gasLimit) * BigInt(fee);
+  return BigInt(limit) * BigInt(fee);
 }
 
 /**

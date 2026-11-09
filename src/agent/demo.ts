@@ -71,6 +71,10 @@ interface DemoArgs {
   wallet?: string;
   ledgerPath: string;
   humanApprovedExact: boolean;
+  /** Explicit vetting chain key (e.g. "bsc", "bsc-testnet"). When omitted,
+   *  sign/full modes vet on "bsc-testnet" (the broadcast target) and vet
+   *  mode vets on "bsc" (mainnet). */
+  chain?: string;
   help: boolean;
 }
 
@@ -100,6 +104,7 @@ function parseArgs(argv: string[]): DemoArgs {
     else if (a === "--path") out.path = next();
     else if (a === "--wallet") out.wallet = next();
     else if (a === "--ledger") out.ledgerPath = next();
+    else if (a === "--chain") out.chain = next();
     else if (a === "--human-approved-exact") out.humanApprovedExact = true;
     else if (a === "--help" || a === "-h") out.help = true;
   }
@@ -110,10 +115,12 @@ function usage(): string {
   return [
     "Usage: npm run demo -- --ca <contract-address> [--mode vet|sign|full] [--dry-run]",
     "                       [--confirm-testnet] [--account <near-account>] [--path <derive-path>]",
-    "                       [--wallet <evm-address>] [--ledger <path>]",
+    "                       [--wallet <evm-address>] [--ledger <path>] [--chain <bsc|bsc-testnet>]",
     "",
     "Modes: vet (default, read-only) | sign (vet + sign, no broadcast) | full (incl. broadcast).",
     "Mode full requires --confirm-testnet and is BSC-testnet only (chainId 97).",
+    "Vetting chain: sign/full vet on bsc-testnet by default (the broadcast target);",
+    "vet mode vets on bsc by default. Override with --chain <key>.",
     "Live signing needs NEAR_ACCOUNT_ID (env or --account) and the MPC signer in src/signing/mpc.ts.",
     "Live full also needs tBNB on the derived address for gas — balance 0 fails fast with faucet instructions.",
     "Use --dry-run to exercise the whole flow with a clearly-marked fake signature (no key, no tx).",
@@ -311,10 +318,19 @@ async function main(): Promise<void> {
     console.log("DRY-RUN: signatures and tx hashes below are FAKE and clearly marked — nothing is broadcast.");
   }
 
-  // --- Step 1: VET (read-only; BSC mainnet adapter — vetting never sends a tx) ---
+  // --- Step 1: VET (read-only; never sends a tx) ---
+  // The vetting chain MUST match the chain the contract lives on. sign/full
+  // broadcast to BSC testnet (97), so they vet on the bsc-testnet adapter;
+  // vetting a testnet-only address through the mainnet adapter reads "no
+  // code" on the wrong chain and verdicts NOT_MINT. Vet mode keeps the
+  // mainnet default (it vets arbitrary real-world drops). --chain overrides.
+  const vetChain =
+    args.chain ?? (args.mode === "sign" || args.mode === "full" ? "bsc-testnet" : "bsc");
   let verdict: VettingVerdict;
   try {
-    const { result, ms } = await timed("vet", () => vetContract(args.ca!, { walletAddress: args.wallet }));
+    const { result, ms } = await timed("vet", () =>
+      vetContract(args.ca!, { chain: vetChain, walletAddress: args.wallet }),
+    );
     verdict = result;
     log("vet", ms, true, `verdict ${verdict.verdict} (score ${verdict.score}, chain ${verdict.chain}, simulation ${verdict.simulationOk ? "ok" : "FAILED"})`);
   } catch (err: any) {
