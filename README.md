@@ -86,9 +86,21 @@ npm test   # 27 tests (23 offline + 4 live against BSC) — all pass
 npx tsc --noEmit
 ```
 
-**4. End-to-end demo (in progress):** `npm run demo` will run
-vet → derive → MPC sign → BSC-testnet mint in one flow. See
-`docs/architecture.md` for the timeline.
+**4. End-to-end demo:** `npm run demo` (vet → derive → MPC sign →
+BSC-testnet mint in one flow) is still in progress — `src/agent/` is empty
+and the live MPC `sign` validation is the next build step (10–11 Nov, see
+`docs/architecture.md` timeline). What exists today:
+- **Demo UI:** open `demo/index.html` (static, no build step, no backend) —
+  `python3 -m http.server` in `demo/` and visit
+  `http://127.0.0.1:8000/index.html`. It shows the 3 steps (VET → SIGN →
+  RECORD), the real vet/derive outputs captured 9 Nov 2026, and a form that
+  builds the exact `npm run vet` command for any contract — it never
+  fabricates a verdict.
+- **Video script:** `docs/demo-script.md` (scenes, exact commands, expected
+  outputs, narration, asset checklist). The video itself is recorded 12 Nov
+  (planned); if the live MPC sign lands first, it becomes Scene 3B.
+- **Submission pack:** `docs/submission.md` (checklist + payload template
+  with human-decided fields left as placeholders + X post draft).
 
 ## Project structure
 
@@ -136,10 +148,14 @@ chain adapter + submission angle, not a rewrite.
 - [x] Vetting pipeline working (27/27 tests, live CLI verdicts)
 - [x] Chain Signatures research verified (MPC root key confirmed live via
       NEAR testnet RPC; offline derivation example runs, self-check OK)
+- [x] Demo UI (`demo/index.html`: 3 steps, real verified vet/derive outputs,
+      contract-address form that builds the exact CLI command — no fake
+      verdicts) + video script (`docs/demo-script.md`) + submission pack
+      (`docs/submission.md`)
 - [ ] Day-1 validation: live MPC `sign` + BSC testnet broadcast
-- [ ] Reputation ledger + agent orchestration + demo UI
-- [ ] Demo video + submission (repo public, X demo post, form before
-      14 Nov 2026 23:59 UTC)
+- [ ] Reputation ledger + agent orchestration
+- [ ] Demo video (script ready, record 12 Nov) + submission (repo public, X
+      demo post, form before 14 Nov 2026 23:59 UTC)
 
 ## License
 

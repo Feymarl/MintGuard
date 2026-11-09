@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MintGuard — an AI agent that only mints what it has verified</title>
+<style>
+  :root { --ink:#1a1a2e; --muted:#555; --line:#ddd; --bg:#fafafa; --card:#fff;
+          --green:#0a7a3d; --amber:#8a6100; --red:#a31212; --near:#00ec97; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         color:var(--ink); background:var(--bg); line-height:1.55; }
+  header { background:#111; color:#fff; padding:2.2rem 1rem 1.8rem; }
+  header .wrap, main .wrap, footer .wrap { max-width:880px; margin:0 auto; }
+  header h1 { margin:0 0 .3rem; font-size:2rem; }
+  header h1 span { color:var(--near); }
+  header p { margin:.3rem 0; color:#ccc; max-width:640px; }
+  .tag { display:inline-block; font-size:.8rem; background:#222; border:1px solid #444;
+         color:#ddd; border-radius:999px; padding:.15rem .6rem; margin:.15rem .2rem .15rem 0; }
+  main { padding:1.5rem 1rem 3rem; }
+  section.card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+                 padding:1.2rem 1.3rem; margin:1.2rem 0; }
+  h2 { margin-top:0; font-size:1.3rem; }
+  h3 { margin:1.2rem 0 .4rem; font-size:1.05rem; }
+  .steps { display:grid; grid-template-columns:repeat(3,1fr); gap:.8rem; margin:1rem 0; }
+  .step { border:1px solid var(--line); border-radius:8px; padding:.9rem; background:#f7f9f7; }
+  .step b { display:block; font-size:1.05rem; margin-bottom:.3rem; }
+  .step .n { display:inline-block; background:#111; color:#fff; border-radius:50%;
+             width:1.5rem; height:1.5rem; text-align:center; line-height:1.5rem;
+             font-size:.85rem; margin-right:.3rem; }
+  pre { background:#111; color:#d6f5e3; padding:.9rem 1rem; border-radius:8px;
+        overflow-x:auto; font-size:.82rem; line-height:1.45; white-space:pre-wrap;
+        word-break:break-word; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  p code, li code { background:#eee; padding:.1rem .35rem; border-radius:4px;
+                    color:#111; font-size:.88em; }
+  .verdict { font-weight:700; padding:.1rem .5rem; border-radius:4px; color:#fff; }
+  .v-risky { background:#8a6100; } .v-safe { background:#0a7a3d; }
+  .v-block { background:#a31212; } .v-notmint { background:#555; }
+  table { border-collapse:collapse; width:100%; font-size:.92rem; margin:.6rem 0; }
+  th, td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  label { font-weight:600; display:block; margin:.4rem 0 .25rem; }
+  input[type=text] { width:100%; padding:.6rem .7rem; font-size:1rem; font-family:ui-monospace,monospace;
+                     border:1px solid #999; border-radius:6px; }
+  input[type=text]:focus { outline:2px solid #111; }
+  button { background:#111; color:#fff; border:0; border-radius:6px; padding:.6rem 1.1rem;
+           font-size:1rem; cursor:pointer; margin-top:.6rem; }
+  button:hover { background:#333; }
+  .hint { color:var(--muted); font-size:.9rem; }
+  .honest { border-left:4px solid #8a6100; background:#fff8e6; padding:.7rem .9rem;
+            border-radius:0 6px 6px 0; margin:.8rem 0; font-size:.93rem; }
+  .ok { border-left-color:var(--green); background:#eaf7ee; }
+  footer { border-top:1px solid var(--line); padding:1.2rem 1rem 2rem; color:var(--muted);
+           font-size:.9rem; }
+  footer a { color:#111; }
+  @media (max-width:640px){ .steps { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>Mint<span>Guard</span></h1>
+    <p>An AI agent that only mints what it has verified — built for
+       <strong>NEAR HACKATHON 2026: Build Beyond Boundaries</strong>.</p>
+    <p>The problem: an agent asked to mint an NFT today either holds a raw EVM
+       private key (one leak = wallet drained) or blindly trusts whatever
+       contract a post links to (free-mint scams, honeypots and fake “free”
+       mints that drain approvals are routine on BSC).</p>
+    <p>
+      <span class="tag">Track: agents (Agent Economy)</span>
+      <span class="tag">Also: security · open</span>
+      <span class="tag">NEAR Chain Signatures (MPC)</span>
+      <span class="tag">BSC vetting · testnet demo</span>
+    </p>
+  </div>
+</header>
+
+<main>
+<div class="wrap">
+
+<section class="card">
+  <h2>How it works — in 3 steps</h2>
+  <div class="steps">
+    <div class="step"><b><span class="n">1</span>VET</b>
+      The agent vets any BSC free-mint contract <em>before</em> touching it:
+      Sourcify verification (ABI + source), proxy detection, free-quota reads
+      (<code>totalMinted</code> / <code>remaining</code> / <code>maxSupply</code>),
+      an <code>eth_call</code> simulation of the mint from the agent’s wallet,
+      and a honeypot / tax / owner safety scan. Read-only — it never sends a
+      transaction. Result: a scored verdict, <code>SAFE</code>,
+      <code>RISKY</code>, <code>BLOCK</code> or <code>NOT_MINT</code>.</div>
+    <div class="step"><b><span class="n">2</span>SIGN</b>
+      Only on a clean verdict, the mint is executed cross-chain from a NEAR
+      account via <strong>NEAR Chain Signatures</strong>: the agent’s EVM
+      address is derived from its NEAR account and the BSC transaction is
+      signed by NEAR’s MPC network. <strong>No seed or private key ever
+      exists on the agent’s machine.</strong></div>
+    <div class="step"><b><span class="n">3</span>RECORD</b>
+      Every vetting and mint is appended to the agent’s reputation ledger, so
+      other agents (and humans) can check what this agent has verified before
+      trusting it.</div>
+  </div>
+  <div class="honest"><strong>Honest status (9 Nov 2026):</strong> step 1 (VET)
+    is done and verified live — 27/27 tests pass and the CLI below produces
+    real verdicts. Step 2’s address derivation is verified offline against
+    NEAR’s MPC contract; the live MPC <code>sign</code> + BSC-testnet broadcast
+    is the next build step (see <a href="../README.md">README → Status</a>).
+    Step 3 (reputation ledger) is not built yet. Nothing on this page is a
+    live backend — the outputs below are real terminal captures, and the form
+    below tells you the exact command to run yourself.</div>
+</section>
+
+<section class="card">
+  <h2>1 · VET — a real verdict, captured live</h2>
+  <p>Command run on 9 Nov 2026, 08:37 UTC (15:37 WIB), from a clean checkout:</p>
+  <pre><code>$ npm run vet -- --ca 0x183CBb52B3C7BCB2433d50dE0Add99B59f4DE4fE --wallet 0xC35438581552BDe41e705ec301eeB17F13DDF021</code></pre>
+  <p>GLOOP (BSC) — a free mint this wallet already claimed (#3096). The
+     simulation correctly refuses a second mint:</p>
+  <pre><code>{
+  "contract": "0x183CBb52B3C7BCB2433d50dE0Add99B59f4DE4fE",
+  "chain": "bsc",
+  "chainId": 56,
+  "verified": true,
+  "exactMatch": true,
+  "isProxy": false,
+  "implementation": null,
+  "mintPriceWei": null,
+  "freeQuotaRemaining": null,
+  "totalMinted": 3333,
+  "maxSupply": null,
+  "simulationOk": false,
+  "simulationError": "already minted",
+  "simulatedFunction": "mint(uint256)",
+  "risks": [
+    {
+      "code": "simulation_revert",
+      "message": "eth_call simulation of mint(uint256) reverted: already minted. Mint may be gated (PoW, allowlist, window) or closed.",
+      "severity": "warn"
+    }
+  ],
+  "score": 70,
+  "verdict": "RISKY"
+}</code></pre>
+  <p>Read it as: the contract is <strong>verified, exact-match, not a
+     proxy</strong> — clean — but this wallet already minted, so the mint
+     simulation reverts and the verdict is
+     <span class="verdict v-risky">RISKY · 70</span>, not
+     <span class="verdict v-safe">SAFE</span>. A <code>SAFE</code> verdict
+     needs score ≥ 80 with a passing simulation. Without a
+     <code>--wallet</code> flag the same contract also scores 70 /
+     <code>RISKY</code>, with the simulation reverting on an unknown custom
+     error instead (GLOOP’s mint is PoW-gated).</p>
+
+  <h3>Negative control — WBNB is not a mint contract</h3>
+  <pre><code>$ npm run vet -- --ca 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c</code></pre>
+  <pre><code>{
+  "contract": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+  "chain": "bsc",
+  "chainId": 56,
+  "verified": false,
+  "exactMatch": false,
+  "simulationOk": false,
+  "simulationError": "no mint/claim function in ABI",
+  "simulatedFunction": null,
+  "risks": [
+    {
+      "code": "not_mint",
+      "message": "No mint/claim function in the contract ABI — this is not a mint contract.",
+      "severity": "block"
+    }
+  ],
+  "score": 0,
+  "verdict": "NOT_MINT"
+}</code></pre>
+  <p class="hint">Other live results (same day, see
+     <code>docs/vetting-pipeline.md</code>): Mechfarm — RISKY 70 (mint window
+     likely closed); Minority Pass — RISKY 45 (free lane sold out,
+     <code>totalMinted</code> 200/200, paid lane 0.003 BNB).</p>
+</section>
+
+<section class="card">
+  <h2>Try it yourself — vet any BSC contract</h2>
+  <p>This page has <strong>no live backend</strong> and will not invent a
+     verdict. Paste a contract address and it shows the exact command to run
+     in your terminal:</p>
+  <label for="ca">BSC contract address</label>
+  <input type="text" id="ca" placeholder="0x…" autocomplete="off" spellcheck="false">
+  <label for="wallet">Your wallet address (optional — the simulation runs “from” this wallet)</label>
+  <input type="text" id="wallet" placeholder="0x… (optional)" autocomplete="off" spellcheck="false">
+  <br>
+  <button id="buildCmd" type="button">Show me the command</button>
+  <button id="copyCmd" type="button" style="display:none">Copy command</button>
+  <p id="cmdError" class="hint" role="alert"></p>
+  <div id="cmdOut" style="display:none">
+    <p>Run this in the repo root (after <code>npm install</code>):</p>
+    <pre><code id="cmdText"></code></pre>
+    <p class="hint">Vetting is read-only: it makes RPC + Sourcify + GoPlus reads
+       and an <code>eth_call</code> simulation. It never sends a transaction,
+       never asks for a key, and never spends gas.</p>
+  </div>
+
+  <h3>What each verdict means</h3>
+  <table>
+    <tr><th>Verdict</th><th>Score</th><th>Meaning</th><th>What MintGuard does</th></tr>
+    <tr><td><span class="verdict v-safe">SAFE</span></td><td>≥ 80</td>
+        <td>Verified source, no hard-block risk, quota available, simulation passed.</td>
+        <td>May proceed to the policy gate, then SIGN.</td></tr>
+    <tr><td><span class="verdict v-risky">RISKY</span></td><td>20–79</td>
+        <td>Something needs a human: simulation reverted, quota unknown or sold out, paid lane, partial match, unrenounced owner…</td>
+        <td>Stops. A human reviews the <code>risks</code> list before anything proceeds.</td></tr>
+    <tr><td><span class="verdict v-block">BLOCK</span></td><td>≤ 19</td>
+        <td>Hard block: unverified source, paused contract, honeypot, or buy/sell tax &gt; 10%.</td>
+        <td>Never mints. No human override in the agent flow.</td></tr>
+    <tr><td><span class="verdict v-notmint">NOT_MINT</span></td><td>0</td>
+        <td>Not a mint contract at all (no mint/claim function in the ABI).</td>
+        <td>Rejected outright — e.g. WBNB above.</td></tr>
+  </table>
+  <p class="hint">Scoring starts at 100. Paid mint (−25), simulation revert
+     (−30), quota sold out (−40), partial Sourcify match (−10), proxy (−5),
+     tax 6–10% (−25), unrenounced owner (−5). Full rules:
+     <code>docs/vetting-pipeline.md</code>. Known limits:
+     <code>freeQuotaRemaining: null</code> means “unknown”, not “unlimited”;
+     <code>mintPriceWei: null</code> means “no price getter found”.</p>
+</section>
+
+<section class="card">
+  <h2>2 · SIGN — the agent’s EVM address comes from NEAR, not from a key</h2>
+  <p>NEAR Chain Signatures derives one EVM address per (NEAR account, path)
+     with additive key derivation — no mnemonic, no BIP32, no private key
+     anywhere. This derivation was verified offline against the MPC contract’s
+     own <code>derived_public_key</code> view call, on testnet and mainnet.
+     Real output, run 9 Nov 2026:</p>
+  <pre><code>$ npm run derive
+# or: npx tsx src/signing/example-derive.ts
+
+NEAR account : example.testnet
+Network      : testnet (MPC: v1.signer-prod.testnet)
+Path         : ethereum-1
+MPC root key : secp256k1:4NfTiv3UsGahebgTaHyD9vF8KYKMBnfd6kh94mK6xv8fGBiJB8TBtFMP5WWXz6B89Ac1fbpzPwAvoyQebemHFwx3
+Derived key  : secp256k1:mtY14KMe3TZggrVhPwjM1Z68WKTXDMYNwNjyMTGzioKV3qJhFZ4LZ41KCe5RUNCjC3EGjS5wpZdzGJ5JZ1Dhab5
+EVM address  : 0xD8ebbAA4f6558cc6b322987194Fd663a976272bD
+(offline — tanpa key, tanpa network)
+Self-check   : derived key OK, EVM address OK</code></pre>
+  <p>So <code>example.testnet</code> + path <code>ethereum-1</code> →
+     <strong><code>0xD8ebbAA4f6558cc6b322987194Fd663a976272bD</code></strong>.
+     To sign, the agent calls <code>sign</code> on the MPC contract
+     (<code>v1.signer-prod.testnet</code> on testnet, <code>v1.signer</code> on
+     mainnet) with the 32-byte transaction hash; the MPC network returns the
+     ECDSA signature and the agent broadcasts the signed BSC transaction.
+     Cost per <code>sign</code>: 1 yoctoNEAR deposit + ~7 TGas burned
+     (300 TGas prepaid, unused refunded) — measured from the published
+     <code>chainsig.js@1.1.16</code> bundle; re-measure at build time.</p>
+  <div class="honest"><strong>The honest MPC caveat.</strong> Chain
+    Signatures removes the single-key failure mode, but it replaces it with a
+    threshold assumption: security holds only while fewer than the threshold
+    of MPC participants are compromised (on-chain state, Oct 2026: 17
+    participants, threshold 11; the set and threshold are public on the
+    contract and can change by participant vote). MintGuard also recommends a
+    function-call key scoped to <code>sign</code> on the MPC contract only —
+    never a full-access key — so a leaked agent key can at most request
+    signatures for that account’s own derived addresses. See
+    <code>docs/chain-signatures-research.md</code> §9.</div>
+  <div class="honest"><strong>What is NOT shown yet.</strong> A live MPC
+    <code>sign</code> and a BSC-testnet mint are the current build step
+    (planned 10–11 Nov). Until that lands, this page shows the verified
+    derivation only — no staged “mint succeeded” screenshot.</div>
+</section>
+
+<section class="card">
+  <h2>3 · RECORD — reputation (coming next)</h2>
+  <p>Every vetting and mint will be appended to the agent’s reputation ledger
+     (local append-only log first, NEAR contract as the stretch goal), so other
+     agents can check what this agent verified before trusting it. Not built
+     yet — the ledger interface is sketched in
+     <code>docs/architecture.md</code>.</p>
+</section>
+
+<section class="card">
+  <h2>Reproduce it (do X — see Y)</h2>
+  <pre><code>git clone &lt;repo-url&gt;   # public repo link at submission time
+cd mintguard
+npm install
+npm run vet -- --ca 0x183CBb52B3C7BCB2433d50dE0Add99B59f4DE4fE
+# → verdict "RISKY", score 70 (see the capture above)
+npm run vet -- --ca 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c
+# → verdict "NOT_MINT", score 0
+npm run derive
+# → 0xD8ebbAA4f6558cc6b322987194Fd663a976272bD, self-check OK
+npm test   # 27 tests (23 offline + 4 live against BSC)
+npx tsc --noEmit</code></pre>
+  <p class="hint">Prerequisites: Node ≥ 20. Vetting needs internet (BSC RPC,
+     Sourcify, GoPlus — all free, no key). Derivation is fully offline.
+     Testnet-only demo is eligible in all tracks (HACKATHON.md Q-010).</p>
+  <p>Docs: <a href="../README.md">README</a> ·
+     <a href="../docs/rules-summary.md">rules-summary</a> ·
+     <a href="../docs/architecture.md">architecture</a> ·
+     <a href="../docs/vetting-pipeline.md">vetting-pipeline</a> ·
+     <a href="../docs/chain-signatures-research.md">chain-signatures-research</a></p>
+</section>
+
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>MintGuard — NEAR Hackathon 2026 “Build Beyond Boundaries”.
+       Demo UI is static HTML/CSS/JS: no build step, no external requests, no
+       tracking. All outputs on this page are real terminal captures from
+       9 Nov 2026 (see commands above each one); nothing here calls a live
+       backend or fabricates a verdict.</p>
+    <p>Baseline disclosure (HACKATHON.md Q-002/Q-005): the vetting heuristics
+       come from the operator’s pre-hackathon BSC mint playbooks (production
+       since Oct 2026). Only the NEAR integration — Chain Signatures
+       execution, agent reputation, orchestration — was built inside the
+       hackathon window, and that is what is judged.</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var caInput = document.getElementById('ca');
+  var walletInput = document.getElementById('wallet');
+  var err = document.getElementById('cmdError');
+  var out = document.getElementById('cmdOut');
+  var cmdText = document.getElementById('cmdText');
+  var copyBtn = document.getElementById('copyCmd');
+  var lastCmd = '';
+
+  function isAddr(s) { return /^0x[0-9a-fA-F]{40}$/.test(s.trim()); }
+
+  document.getElementById('buildCmd').addEventListener('click', function () {
+    var ca = caInput.value.trim();
+    var wallet = walletInput.value.trim();
+    err.textContent = '';
+    if (!isAddr(ca)) {
+      out.style.display = 'none'; copyBtn.style.display = 'none';
+      err.textContent = 'That does not look like a contract address — it must be 0x followed by 40 hex characters.';
+      return;
+    }
+    if (wallet && !isAddr(wallet)) {
+      out.style.display = 'none'; copyBtn.style.display = 'none';
+      err.textContent = 'The wallet address (if given) must also be 0x + 40 hex characters.';
+      return;
+    }
+    lastCmd = 'npm run vet -- --ca ' + ca + (wallet ? ' --wallet ' + wallet : '');
+    cmdText.textContent = lastCmd;
+    out.style.display = 'block'; copyBtn.style.display = '';
+  });
+
+  copyBtn.addEventListener('click', function () {
+    var done = function () { copyBtn.textContent = 'Copied ✓'; setTimeout(function () { copyBtn.textContent = 'Copy command'; }, 2000); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(lastCmd).then(done, function () { err.textContent = 'Copy failed — select the command text manually.'; });
+    } else {
+      err.textContent = 'Clipboard unavailable — select the command text manually.';
+    }
+  });
+})();
+</script>
+</body>
+</html>
