@@ -1,16 +1,28 @@
 {
   "dependencies": {
+    "@near-js/accounts": "^2.5.1",
+    "@near-js/client": "^2.5.1",
+    "@near-js/crypto": "^2.5.1",
+    "@near-js/keystores": "^2.5.1",
+    "@near-js/providers": "^2.5.1",
+    "@near-js/signers": "^2.5.1",
+    "@near-js/transactions": "^2.5.1",
+    "@near-js/utils": "^2.5.1",
     "bn.js": "^5.2.1",
     "bs58": "^6.0.0",
+    "chainsig.js": "^1.1.16",
     "elliptic": "^6.6.1",
     "ethers": "^6.13.0",
-    "js-sha3": "^0.14.0"
+    "js-sha3": "^0.14.0",
+    "viem": "^2.57.17"
   },
   "description": "MintGuard — an AI agent on NEAR that vets free mints and executes them cross-chain via NEAR Chain Signatures. Built for NEAR HACKATHON 2026.",
   "devDependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
     "@types/bn.js": "^5.1.0",
     "@types/elliptic": "^6.4.18",
     "@types/node": "^22.0.0",
+    "solc": "^0.8.30",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
@@ -27,7 +39,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "vet": "tsx src/vetting/cli.ts",
-    "derive": "tsx src/signing/example-derive.ts"
+    "derive": "tsx src/signing/example-derive.ts",
+    "sign": "tsx src/signing/cli-sign.ts",
+    "mint": "tsx src/signing/cli-mint.ts",
+    "compile-nft": "tsx src/signing/nft-contract.ts"
   },
   "type": "module",
   "version": "0.1.0"

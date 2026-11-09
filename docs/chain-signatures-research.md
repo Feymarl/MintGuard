@@ -295,11 +295,9 @@ import { bscTestnet } from "viem/chains";
 const accountId = process.env.NEAR_ACCOUNT_ID!;              // mis. mintguard.testnet
 const keypair = KeyPair.fromString(process.env.NEAR_PRIVATE_KEY as KeyPairString);
 
-const contract = new contracts.near.ChainSignatureContract({
+const contract = new contracts.ChainSignatureContract({
   networkId: "testnet",
   contractId: "v1.signer-prod.testnet",
-  accountId,
-  keypair,
 });
 
 const publicClient = createPublicClient({
@@ -336,13 +334,22 @@ const [signature] = await contract.sign({
 
 Catatan API (jujur soal yang belum 100% pasti dari bundle):
 
-- Bentuk `signerAccount` di `chainsig.js` adalah
-  `{accountId, signAndSendTransactions}` — di contoh wallet (frontend) ini
-  datang dari `@hot-labs/near-connect`. Untuk agen CLI (Node), objek ini
-  harus dibangun dari `@near-js/accounts` + `KeyPair` (full-access key akun
-  testnet) — **pola pastinya harus dikonfirmasi ke typedoc / folder
-  `examples/` repo `chainsig.js` saat build (Day 1)**. Ini satu-satunya
-  bagian API yang belum terpegang contoh running-nya.
+- **TERKONFIRMASI Day-1 (2026-11-09, `src/signing/mpc.ts`):** bentuk
+  `signerAccount` untuk agen CLI adalah
+  `{accountId, signAndSendTransactions}` yang dibangun dari
+  `@near-js/accounts@2.5.1` — `Account.signAndSendTransactions({transactions:
+  [{receiverId, actions}]})` sudah ada secara native dan bentuknya persis
+  yang dipanggil `chainsig.js` (ia mengirim
+  `{transactions: [{signerId, receiverId, actions}]}`; field `signerId`
+  dibuang adapter karena signer sudah implisit dari `Account`). Tidak perlu
+  `@hot-labs/near-connect` (wallet browser) untuk agen CLI. Konstruktor
+  `ChainSignatureContract` HANYA menerima `{contractId, networkId,
+  fallbackRpcUrls}` — **tidak ada `accountId`/`keypair` di konstruktor**
+  (contoh §5(b) di versi awal dokumen ini sempat menulis keduanya dan
+  `contracts.near.ChainSignatureContract` — keduanya SALAH; yang benar
+  `contracts.ChainSignatureContract`, diverifikasi runtime + `.d.ts`).
+  `Account` dibangun sebagai `new Account(accountId, provider, signer)`
+  dengan `JsonRpcProvider` + `KeyPairSigner.fromSecretKey(...)`.
 - `prepareTransactionForSigning` mengembalikan `{transaction, hashesToSign}`.
   Field yang diterima untuk function call (`data`, `gasLimit`, `maxFeePerGas`,
   dsb.) mengikuti tipe adapter EVM — konfirmasi ke typedoc saat build; jangan
@@ -445,12 +452,14 @@ untuk demo cukup RPC biasa. `nearcore` tidak mendukung JSON-RPC batch.
 
 ### Akun testnet — status saat riset ini ditulis
 
-**Belum dibuat.** Semua verifikasi di riset ini memakai read-only RPC
-(view calls) dan komputasi offline, jadi belum butuh akun. Akun testnet
-(`mintguard.testnet` atau sejenis) dibuat pada fase build (Day 1) dengan
-`near-cli-rs` + faucet, dan key-nya disimpan **HANYA** di `.env.local`
-(sudah di-gitignore: `.env.*`). Tidak ada transaksi mainnet, tidak ada akun
-mainnet yang dibuat dalam riset ini.
+**DIBUAT Day-1 (2026-11-09 ~15:38 WIB): `mintguard.testnet`, public key
+`ed25519:5tbjhcmhccmxL8KXkFFzeX34MkGaGfhBFYZWjbnqvyQU`, didanai 10 NEAR
+via `POST helper.testnet.near.org/account` (keypair ed25519 digenerate
+lokal).** Key hanya di `~/.near-credentials/testnet/mintguard.testnet.json`
+(mode 600) + `.env.local` (gitignored). Alamat turunan
+(`ethereum-1`): `0x225b2C6c45A3f4d5bEf62732CCf380F3dA644e1A` — terverifikasi
+cocok antara rumus offline, view call `derived_public_key` on-chain, dan
+`chainsig.getDerivedPublicKey`. Saldo NEAR pasca-validasi: 9,9983 NEAR.
 
 ---
 
@@ -469,14 +478,12 @@ mainnet yang dibuat dalam riset ini.
 
 ### Blocker konkret (urut risiko)
 
-1. **API `signerAccount` untuk agen CLI belum terpegang contoh running-nya.**
-   Contoh docs memakai wallet browser (`@hot-labs/near-connect`); agen CLI
-   harus merakit `{accountId, signAndSendTransactions}` dari `@near-js/*`.
-   Ini satu-satunya bagian yang belum pasti — **validasi Day 1, jam pertama.**
-   Kalau pola ini mentok >2 jam, fallback: panggil `sign` langsung via
-   `@near-js/accounts` `account.functionCall()` mentah (tanpa `chainsig.js`
-   untuk langkah sign), karena bentuk function call-nya sudah diketahui
-   persis dari bundle (§3).
+1. **API `signerAccount` untuk agen CLI — TERSELESAIKAN Day-1 (2026-11-09).**
+   Pola yang jalan: `Account` @near-js/accounts 2.5.1 +
+   `signAndSendTransactions` native (lihat §5 catatan + `src/signing/mpc.ts`);
+   `sign` live 3x sukses, latensi 12,88–16,91 dtk. Sisa catatan: latensi
+   ~13–17 dtk per tanda tangan — demo harus menunjukkan progress, bukan
+   mengasumsikan "1 detik trigger".
 2. **Latensi `sign` MPC belum diukur.** Metode ini yield menunggu jaringan
    MPC; estimasi komunitas "beberapa detik", tapi belum ada angka testnet
    yang terukur dari kita. Kalau ternyata 30–60 detik per tanda tangan,
@@ -484,7 +491,12 @@ mainnet yang dibuat dalam riset ini.
    ala free-mint BSC tidak berlaku di sini. Ukur Day 1.
 3. **Faucet tBNB punya filter bot (≥0,002 BNB mainnet).** Bukan blocker
    keras — atasi dengan pola kirim dari wallet yang sudah ada (§7) — tapi
-   harus disiapkan sebelum demo, bukan saat demo.
+   harus disiapkan sebelum demo, bukan saat demo. **Update Day-1
+   (2026-11-09): TIDAK ADA wallet Rakha yang lolos filter (baw 0,000847
+   BNB); QuickNode kini ikut mensyaratkan saldo mainnet; Chainstack
+   0,08 ETH. Jalur tanpa biaya yang tersisa: bot Telegram
+   `@bnbchain_official_bot` / tiket Discord (0,3 tBNB/hari) — lihat §12.
+   Layer A tertahan di blocker ini; Layer B sudah tercapai.
 4. **README `chainsig.js` basi** (bentuk `sign` lama). Risiko salah salin
    contoh. Mitigasi: pakai §3 + §5 dokumen ini (dari bundle rilis) dan
    typedoc resmi sebagai rujukan, bukan README.
@@ -586,3 +598,73 @@ jadi saat deadline.
   `@hot-labs/near-connect 0.12.0`, `viem 2.57.17`, `ethers 6.17.0`.
 - Belum dilakukan (fase build): pembuatan akun testnet, `sign` live,
   pengukuran latensi MPC, broadcast ke BSC testnet.
+
+## 12. Log validasi Day-1 (Worker 1, 2026-11-09 ~15:38–16:00 WIB)
+
+- **Deps ter-install (project, bukan global):** `chainsig.js@1.1.16`,
+  `@near-js/*@2.5.1` (client, crypto, accounts, keystores, providers,
+  signers, transactions, utils), `viem@2.57.17`; dev: `solc@0.8.30`,
+  `@openzeppelin/contracts@5.4.0` (untuk kontrak demo NFT).
+- **Modul jadi:** `src/signing/derive.ts` (refactor example-derive),
+  `src/signing/mpc.ts` (ChainSignatureContract + signerAccount CLI +
+  recovery offline), `src/signing/broadcast.ts` (finalize + broadcast,
+  guard chainId 97, tolak 56), `src/signing/cli-sign.ts` (validasi Layer
+  C), `src/signing/cli-mint.ts` (alur Layer A/B), `src/signing/nft-contract.ts`
+  (compile `contracts/MintGuardDemoNFT.sol` — ERC721 free-mint minimal,
+  4604 byte bytecode, ABI 29 item). `example-derive.ts` tetap jalan.
+- **Derive — TERBUKTI 3 arah:** offline
+  `0x225b2C6c45A3f4d5bEf62732CCf380F3dA644e1A` == view call
+  `derived_public_key` on-chain == `chainsig.getDerivedPublicKey`.
+  Kunci turunan:
+  `secp256k1:NUbEKhQpvDSHBrhgv3Y5NLRuywZvSjFEj2eKNyStgjrHtg2NUa6jTcT3rPYEBii23vDRN2MErSBHdn6nqtJNGan`.
+- **MPC `sign` live — JALAN, latensi 12,88 dtk & 16,91 dtk** (2x sign hash
+  pesan) dan **15,31 dtk** (sign hash tx deploy). Recovery offline MATCH
+  di semua run (`ethers.recoverAddress` == alamat turunan).
+  **LAPISAN C TERCAPAI.**
+- **Blokir teknis yang ditemukan & diatasi:** egress VM kadang menutup
+  socket TLS di tengah request (`UND_ERR_SOCKET`, "other side closed")
+  sehingga `sign` gagal 2x dengan `fetch failed` pada provider tunggal.
+  Perbaikan: `FailoverRpcProvider` (4 RPC testnet NEAR) + fallback viem
+  antar 4 RPC BSC. Setelah itu sign lolos.
+- **Layer B — TERBUKTI:** tx deploy `MintGuardDemoNFT` disiapkan
+  (EIP-1559, chainId 97, nonce 0, gasLimit 1.028.393, maxFeePerGas 0,1
+  gwei) → MPC sign → recovery MATCH → `finalize` menghasilkan raw tx
+  valid; `ethers.Transaction.from` mem-parse-nya dengan `from` == alamat
+  turunan. Raw tx tersimpan di
+  `src/signing/layer-b-signed-deploy-tx.txt`, hash bila di-broadcast:
+  `0xe9f6cadc03f8175973d1c419e966ff3105e2bcfcf2eb5d5c23a21c076c50c627`.
+- **Gas BSC testnet (cek live 3 RPC):** `eth_gasPrice` = 0,1 gwei.
+  Deploy ≈ 0,000103 tBNB; mint ≈ 0,00001 tBNB. Drip 0,01 tBNB pun
+  cukup untuk deploy + puluhan mint.
+- **tBNB — BLOKIR UTAMA, belum ada (saldo alamat turunan 0):**
+  - Faucet resmi: butuh ≥0,002 BNB mainnet di alamat peminta. Semua
+    wallet Rakha di bawah itu: baw `0xC354...F021` = 0,000847 BNB
+    (kurang ~0,001153 BNB), phone `0x4E05...00B2` = 0, TERA
+    `0x8859...6647` = 0, vAPI `0x1188...67E6` = 0.
+  - QuickNode faucet: halaman live 2026-11-09 menyatakan **sekarang juga
+    mensyaratkan "a small mainnet balance"** — klaim "tanpa syarat" di
+    blog-blog lama sudah basi. Terblokir.
+  - Chainstack: butuh 0,08 ETH mainnet + API key. Terblokir.
+  - Chainlink faucet: halaman JS-rendered, wajib connect wallet
+    (MetaMask/WalletConnect) — tidak bisa headless; alamat turunan
+    memang tidak punya key EVM (by design). Tidak dicoba lebih jauh.
+  - thirdweb (`thirdweb.com/binance-testnet`, 0,01 tBNB/hari): wajib
+    connect wallet + sign-in — tidak bisa headless. Sama.
+  - Bitbond TokenTool: wajib connect wallet + profil — tidak bisa headless.
+  - `faucet.zalalena.com/bsc`: pihak ketiga tak dikenal + captcha —
+    tidak diverifikasi, tidak direkomendasikan.
+  - **Jalur yang tersisa (butuh langkah manusia, tanpa biaya):** bot
+    Telegram resmi BNB Chain `@bnbchain_official_bot` atau tiket
+    Discord BNB Chain — docs resmi menyebut 0,3 tBNB/hari tanpa syarat
+    saldo mainnet. Rakha cukup kirim alamat turunan ke bot.
+  - **Jalur berbayar (butuh iya Rakha, ~$1,30):** top-up wallet baw
+    ~0,0012 BNB mainnet → 0,002 BNB → faucet resmi terbuka (0,3 tBNB/hari).
+    TIDAK dieksekusi — menunggu persetujuan eksplisit.
+  - Simular Box TIDAK dipakai: halaman faucet yang tersisa semuanya
+    berujung connect-wallet/captcha/langkah manusia — render JS tidak
+    mengubah hasil itu.
+- **Kesimpulan Day-1: LAPISAN B tercapai dengan bukti kriptografis
+  lengkap; Layer A tertahan SATU blocker (tBNB 0).** Begitu alamat
+  turunan menerima tBNB (jalur bot Telegram atau top-up), jalankan
+  `npx tsx src/signing/cli-mint.ts` — deploy + mint + verifikasi
+  `ownerOf` sudah siap, tanpa perubahan kode.
