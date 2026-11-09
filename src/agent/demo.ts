@@ -14,6 +14,16 @@
 //                    REQUIRES --confirm-testnet (explicit intent) and is
 //                    TESTNET ONLY (BSC testnet, chainId 97) — the policy
 //                    gate refuses mainnet unconditionally.
+//                    Live full goes through src/agent/live-full.ts:
+//                    the chainsig EVM adapter prepares the tx against
+//                    chain state (real nonce + gas), MPC signs it, then
+//                    finalize -> broadcast -> receipt -> ownerOf. The
+//                    generic sign path below is NOT used for live full:
+//                    it signs a locally-built legacy tx (placeholder
+//                    nonce 0, 1 gwei) whose signature can never broadcast.
+//                    Live full also needs tBNB on the derived address
+//                    for gas — balance 0 fails fast with faucet
+//                    instructions, before any MPC sign is attempted.
 //
 // Signing seam: the live MPC signer (src/signing/mpc.ts) is built by a
 // parallel worker. demo.ts never imports it statically — it loads it lazily
@@ -37,6 +47,11 @@ import {
   type SigningProvider,
 } from "./types.js";
 import { appendEntry, makeEntry, DEFAULT_LEDGER_PATH } from "../reputation/ledger.js";
+import {
+  buildMintCalldata,
+  createLiveFullDeps,
+  runLiveFullMint,
+} from "./live-full.js";
 
 // NOTE: src/signing/example-derive.ts is a CLI script, not a library — it
 // runs main() on import (and would swallow process.argv). Never import it
@@ -100,6 +115,7 @@ function usage(): string {
     "Modes: vet (default, read-only) | sign (vet + sign, no broadcast) | full (incl. broadcast).",
     "Mode full requires --confirm-testnet and is BSC-testnet only (chainId 97).",
     "Live signing needs NEAR_ACCOUNT_ID (env or --account) and the MPC signer in src/signing/mpc.ts.",
+    "Live full also needs tBNB on the derived address for gas — balance 0 fails fast with faucet instructions.",
     "Use --dry-run to exercise the whole flow with a clearly-marked fake signature (no key, no tx).",
   ].join("\n");
 }
@@ -227,52 +243,20 @@ async function loadLiveSigner(accountId: string): Promise<SigningProvider> {
   );
 }
 
-/** Same lazy pattern for the live broadcaster (src/signing/broadcast.ts). */
-async function loadLiveBroadcaster(): Promise<BroadcastProvider> {
-  let mod: Record<string, unknown>;
-  try {
-    // Computed specifier — see loadLiveSigner: do not resolve statically.
-    const specifier = "../signing/broadcast.js";
-    mod = (await import(specifier)) as Record<string, unknown>;
-  } catch (err: any) {
-    throw new Error(
-      `Live broadcaster not available: src/signing/broadcast.ts could not be loaded (${err?.message ?? err}). ` +
-        `Run with --dry-run, or wait for the signing worker to land src/signing/broadcast.ts.`,
-    );
-  }
-  if (typeof mod.broadcastTx === "function") {
-    const fn = mod.broadcastTx as (raw: string) => Promise<{ txHash: string }>;
-    return { broadcast: fn };
-  }
-  if (typeof mod.createBroadcaster === "function") {
-    return (mod.createBroadcaster as () => Promise<BroadcastProvider>)();
-  }
-  throw new Error(
-    "Live broadcaster loaded but exposes no `broadcastTx(rawTx)` or `createBroadcaster()` — " +
-      "see src/agent/types.ts (BroadcastProvider). NOTE: the landed src/signing/broadcast.ts " +
-      "exposes broadcastSignedTx(evmAdapter, signedTx), which needs a chainsig EVM adapter " +
-      "(createEvmAdapter + viem client + MPC contract) — demo does not construct that; " +
-      "at MVP assembly either the signing worker adds a `broadcastTx(rawTx)` helper, " +
-      "or demo's full mode is reworked onto prepareTxForSigning/finalizeTx/broadcastSignedTx.",
-  );
-}
-
 /** Build the unsigned mint tx + its EIP-155 signing hash (type-0 legacy tx).
  *  Exported for offline tests — the sign/broadcast happy path has no live
- *  SAFE contract to exercise it against right now. */
+ *  SAFE contract to exercise it against right now.
+ *  NOTE: this builder serves sign mode and dry-run full only. Live full
+ *  does NOT use it (see the live-full branch in main()): the adapter
+ *  prepares the real tx from chain state instead. */
 export function buildMintTx(
   verdict: VettingVerdict,
   opts: { chainId: number; dryRun: boolean },
 ): { tx: ethers.Transaction; signingHash: string; calldata: string } {
-  // Calldata: encode the simulated mint function with quantity 1 when we
-  // know it (e.g. "mint(uint256)"); otherwise empty calldata — the tx is
-  // still signable, but the mint would not execute; the demo says so.
-  let calldata = "0x";
-  const fn = verdict.simulatedFunction;
-  if (fn && /^mint\(uint256\)$/.test(fn)) {
-    const iface = new ethers.Interface(["function mint(uint256 quantity)"]);
-    calldata = iface.encodeFunctionData("mint", [1]);
-  }
+  // Calldata for the simulated mint function (shared builder in
+  // live-full.ts). Unknown shapes -> "0x": the tx is still signable,
+  // but the mint would not execute; the demo says so.
+  const calldata = buildMintCalldata(verdict.simulatedFunction);
   const tx = ethers.Transaction.from({
     type: 0,
     chainId: opts.chainId,
@@ -401,7 +385,74 @@ async function main(): Promise<void> {
   appendEntry({ ...vetEntry, derivedAddress }, args.ledgerPath);
   log("record", 0, true, `vetting appended to ledger (${args.ledgerPath})`);
 
-  // --- Step 4: SIGN the mint payload ---
+  // --- Step 4 (full-live only): ADAPTER FLOW via live-full.ts ---
+  // Live full does NOT use the generic sign/broadcast path below: that
+  // path signs a locally-built legacy tx (placeholder nonce 0, 1 gwei)
+  // whose signature can never broadcast. The live mint is prepared
+  // against chain state by the chainsig EVM adapter, then MPC-signed,
+  // finalized, broadcast, receipt-checked and ownerOf-verified inside
+  // runLiveFullMint — with every guard (testnet-only, tBNB, gas
+  // ceiling, recovery, receipt, ownership) running before the step it
+  // protects. A tBNB balance of 0 fails here with faucet instructions.
+  if (args.mode === "full" && !args.dryRun) {
+    try {
+      const liveDeps = await createLiveFullDeps(accountId, args.path);
+      const { result, ms } = await timed("live-full", () =>
+        runLiveFullMint(liveDeps, {
+          verdict,
+          derivedAddress,
+          policy: {
+            mintValueWei: verdict.mintPriceWei ?? undefined,
+            maxGasWei: DEFAULT_MAX_GAS_WEI,
+            humanApprovedExact: args.humanApprovedExact,
+          },
+        }),
+      );
+      log(
+        "live-full",
+        ms,
+        true,
+        `broadcast ${result.txHash} — token #${result.tokenId} ownerOf OK (${result.explorerTxUrl})`,
+      );
+      appendEntry(
+        makeEntry({
+          kind: "mint",
+          contract: verdict.contract,
+          chain: "bsc-testnet",
+          verdict: verdict.verdict,
+          score: verdict.score,
+          agentAccount: accountId,
+          derivedAddress,
+          txHash: result.txHash,
+          receipt: `success block=${result.receipt.blockNumber} gasUsed=${result.receipt.gasUsed}`,
+          notes: `demo mode=full live — token #${result.tokenId}`,
+        }),
+        args.ledgerPath,
+      );
+      log("record", 0, true, `mint appended to ledger (${args.ledgerPath})`);
+      console.log(
+        JSON.stringify(
+          {
+            mode: "full",
+            dryRun: false,
+            verdict,
+            derivedAddress,
+            txHash: result.txHash,
+            tokenId: result.tokenId.toString(),
+            steps,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    } catch (err: any) {
+      log("live-full", 0, false, err?.message ?? String(err));
+      process.exit(1);
+    }
+  }
+
+  // --- Step 4 (sign mode + dry-run full): SIGN the mint payload ---
   const { tx, signingHash, calldata } = buildMintTx(verdict, {
     chainId: BSC_TESTNET_CHAIN_ID,
     dryRun: args.dryRun,
@@ -433,10 +484,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  // --- Step 5 (full only): BROADCAST + record mint ---
-  const broadcaster: BroadcastProvider = args.dryRun
-    ? new DryRunBroadcaster()
-    : await loadLiveBroadcaster();
+  // --- Step 5 (full only, dry-run): BROADCAST + record mint ---
+  // Live full returned earlier (live-full branch above); only the
+  // dry-run path reaches here, with the fake broadcaster.
+  const broadcaster: BroadcastProvider = new DryRunBroadcaster();
   tx.signature = sig;
   const signedSerialized = tx.serialized;
   let txHash: string;
