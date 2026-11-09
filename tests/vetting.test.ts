@@ -9,8 +9,8 @@
 import { describe, test, expect } from "vitest";
 import { ethers } from "ethers";
 import { selector, READ_SIGNATURES, isMintCandidate } from "../src/vetting/core/selectors.js";
-import { scoreVetting, deriveFreeQuota, hasMintFunction, buildVerdict } from "../src/vetting/core/scoring.js";
-import { placeholderArgs, shortRevertReason } from "../src/vetting/core/simulate.js";
+import { scoreVetting, deriveFreeQuota, hasMintFunction, buildVerdict, isProvenFreeMint } from "../src/vetting/core/scoring.js";
+import { placeholderArgs, shortRevertReason, simulateMintAt } from "../src/vetting/core/simulate.js";
 import { parseGoPlusResponse } from "../src/vetting/core/safety.js";
 import { getAdapter } from "../src/vetting/adapters/bsc.js";
 import { vetContract } from "../src/vetting/verdict.js";
@@ -30,6 +30,23 @@ const NO_MINT_ABI = [
   { type: "function", name: "deposit", inputs: [], stateMutability: "payable" },
   { type: "function", name: "withdraw", inputs: [{ name: "wad", type: "uint256" }], stateMutability: "nonpayable" },
 ];
+
+// MintGuardDemoNFT shape: no-arg nonpayable mint(), no price getter.
+const DEMO_MINT_ABI = [
+  { type: "function", name: "mint", inputs: [], stateMutability: "nonpayable" },
+  { type: "function", name: "totalSupply", inputs: [], outputs: [{ type: "uint256" }], stateMutability: "view" },
+];
+
+/** VettingInput for a contract with NO readable price function. */
+function noPriceInput(overrides: Partial<VettingInput> = {}): VettingInput {
+  return baseInput({
+    contract: "0x59A654571aD5449A01A428FB506f8dff4AFe561c",
+    sourcify: { verified: true, exactMatch: true, contractName: "MintGuardDemoNFT", abi: DEMO_MINT_ABI },
+    chain: { ...baseInput().chain, mintPriceWei: null, totalMinted: null, maxSupply: null },
+    simulation: { ok: true, error: null, fn: "mint()" },
+    ...overrides,
+  });
+}
 
 function baseInput(overrides: Partial<VettingInput> = {}): VettingInput {
   return {
@@ -237,6 +254,98 @@ describe("helpers (offline)", () => {
     expect(v.totalMinted).toBe(3096);
     expect(v.maxSupply).toBe(10000);
     expect(v.verdict).toBe("SAFE");
+  });
+});
+
+describe("bsc-testnet adapter (offline)", () => {
+  test("getAdapter('bsc-testnet') is chain 97 with Sourcify 97 and NO GoPlus", () => {
+    const a = getAdapter("bsc-testnet");
+    expect(a.chainId).toBe(97);
+    expect(a.sourcifyChainId).toBe(97);
+    // GoPlus does not cover chain 97: the adapter must not claim it and
+    // must not offer a token-security fetcher (the engine then records
+    // tokenSecurity null instead of failing or querying an unsupported chain).
+    expect(a.goplusChainId).toBeUndefined();
+    expect(a.getTokenSecurity).toBeUndefined();
+    expect(a.key).toBe("bsc-testnet");
+    expect(a.rpcUrls.length).toBeGreaterThan(0);
+  });
+
+  test("mainnet adapter is untouched (chain 56, GoPlus 56)", () => {
+    const a = getAdapter("bsc");
+    expect(a.chainId).toBe(56);
+    expect(a.goplusChainId).toBe(56);
+    expect(typeof a.getTokenSecurity).toBe("function");
+  });
+});
+
+describe("proven-free inference (offline)", () => {
+  test("no price getter + nonpayable sim success => proven free, price '0', SAFE", () => {
+    const input = noPriceInput();
+    expect(isProvenFreeMint(input)).toBe(true);
+    const v = buildVerdict(input, "bsc-testnet", 97);
+    expect(v.mintPriceWei).toBe("0");
+    expect(v.verdict).toBe("SAFE");
+    expect(v.score).toBe(100);
+    expect(v.risks.some((r) => r.code === "price_inferred_free")).toBe(true);
+    expect(v.chainId).toBe(97);
+  });
+
+  test("failed simulation => NOT proven free, price stays null", () => {
+    const input = noPriceInput({
+      simulation: { ok: false, error: "reverted", fn: "mint()" },
+    });
+    expect(isProvenFreeMint(input)).toBe(false);
+    expect(buildVerdict(input, "bsc-testnet", 97).mintPriceWei).toBeNull();
+  });
+
+  test("payable mint function => NOT proven free even when the sim succeeds", () => {
+    const payableAbi = [
+      { type: "function", name: "mint", inputs: [], stateMutability: "payable" },
+    ];
+    const input = noPriceInput({
+      sourcify: { verified: true, exactMatch: true, contractName: "X", abi: payableAbi },
+    });
+    expect(isProvenFreeMint(input)).toBe(false);
+    expect(buildVerdict(input, "bsc-testnet", 97).mintPriceWei).toBeNull();
+  });
+
+  test("readable price (even 0) => inference not used, raw value reported", () => {
+    const input = noPriceInput({
+      chain: { ...noPriceInput().chain, mintPriceWei: 0n },
+    });
+    expect(isProvenFreeMint(input)).toBe(false);
+    expect(buildVerdict(input, "bsc-testnet", 97).mintPriceWei).toBe("0");
+  });
+});
+
+describe("simulation sender (offline)", () => {
+  test("simulateMintAt defaults to a NON-ZERO sender: mint-to-caller succeeds", async () => {
+    const abi = [
+      { type: "function", name: "mint", inputs: [], stateMutability: "nonpayable" },
+    ];
+    const seenFrom: (string | undefined)[] = [];
+    // Fake provider emulating ERC721 _safeMint to msg.sender: minting to
+    // address(0) reverts with ERC721InvalidReceiver; any real caller works.
+    const fakeProvider = {
+      async call(tx: { to: string; data: string; from?: string; value?: bigint }) {
+        seenFrom.push(tx.from);
+        if (tx.from === "0x0000000000000000000000000000000000000000") {
+          throw new Error("execution reverted: ERC721InvalidReceiver");
+        }
+        return "0x";
+      },
+    } as unknown as ethers.Provider;
+    const res = await simulateMintAt(
+      fakeProvider,
+      "0x59A654571aD5449A01A428FB506f8dff4AFe561c",
+      abi,
+    );
+    expect(res.ok).toBe(true);
+    expect(res.fn).toBe("mint()");
+    expect(seenFrom).toHaveLength(1);
+    expect(seenFrom[0]).not.toBe("0x0000000000000000000000000000000000000000");
+    expect(seenFrom[0]).toMatch(/^0x[0-9a-fA-F]{40}$/);
   });
 });
 

@@ -13,7 +13,19 @@ export interface SimulationResult {
   fn: string | null;
 }
 
-const DEFAULT_FROM = "0x0000000000000000000000000000000000000000";
+/**
+ * Default simulation sender when the caller passes no wallet.
+ *
+ * MUST be a non-zero address. The old default was address(0), which
+ * false-negatives on every mint-to-caller contract: ERC721 `_safeMint`
+ * to address(0) reverts (ERC721InvalidReceiver, selector 0x64a0ae92),
+ * so the simulation of a perfectly good free mint failed and the
+ * policy gate refused it. The dead address stands in for "a normal
+ * caller": it is a plain EOA (no code, so _safeMint receiver checks
+ * pass) that no contract allowlists, so a gated mint still reverts
+ * honestly and is reported as RISKY with the revert reason.
+ */
+const DEFAULT_FROM = "0x000000000000000000000000000000000000dEaD";
 
 /** Build placeholder args for a mint function so eth_call can run offline
  *  of any real user intent: address -> wallet, uint quantity -> 1, else 0. */
