@@ -4,6 +4,18 @@
 > Track: **Agent Economy** (`agents`); also fits **AI Security & Defense**
 > (`security`) and **Open Innovation** (`open`).
 
+## Our second NEAR Hackathon 2026 project (Q-015 independence disclosure)
+
+Our other NEAR Hackathon 2026 project is **IntentGuard**
+(https://github.com/Feymarl/IntentGuard, track: Unstoppable DeFi) — a
+bouncer for NEAR Intents swaps: it vets the destination token before
+your intent executes and blocks the swap if it's a trap. The two
+projects are independent: MintGuard vets contracts you **mint** (via
+NEAR Chain Signatures, for a minting agent); IntentGuard vets tokens
+you **buy** (via NEAR Intents, for a trader). They share only the
+vetting baseline listed in IntentGuard's README, and neither depends on
+the other at runtime.
+
 ## The problem
 
 AI agents are being asked to spend money on-chain — mint NFTs, claim drops,
